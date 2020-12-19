@@ -1,5 +1,14 @@
 # golfgenius
-Package to interface with Golf Genius
+Package to interface with Golf Genius. Currently
+this uses screen scraping since an API key for the
+Zogby group is not yet available. Therefore, it is
+expected for there to be issues with stability until
+this package is updated to fetch data from the golfgenius REST API.
+
+## Install
+You shouldn't have to install this package directly, instead it will
+be installed automatically by [power_rankings](https://github.com/cswelton/power_rankings)
+
 
 ## parser.GGParser
 - Parses golf genius data
@@ -7,16 +16,11 @@ Package to interface with Golf Genius
 ## stats.Stats
 - Computes statistics using golf genius data
 
-## Install
-```shell script
-python setup.py install
-```
-
 ## Example Usage
 
 This exports all results to a directory
 
-```python
+```
 from golfgenius.parser import GGParser
 
 parser = GGParser(headless=True)
