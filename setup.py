@@ -15,7 +15,7 @@ setuptools.setup(
     ],
     long_description=long_description,
     long_description_content_type="text/markdown",
-    url="https://github.com/cswelton/bbc_stats/golfgenius",
+    url="https://github.com/cswelton/golfgenius/golfgenius",
     packages=['golfgenius'],
     classifiers=[
         "Programming Language :: Python :: 3",
