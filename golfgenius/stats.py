@@ -26,8 +26,12 @@ class Stats(object):
                     m = self.round_regexp.search(data["name"])
                     if m:
                         round_info = m.groupdict()
+                        if int(round_info["round_id"]) > 60:
+                            year = 2021
+                        else:
+                            year = 2020
                         data["results"]["date"] = datetime.date(
-                            2020, MONTH_IDX.index(round_info["month"].lower()) + 1, int(round_info["day"]))
+                            year, MONTH_IDX.index(round_info["month"].lower()) + 1, int(round_info["day"]))
                     elif timedelta is not None:
                         print("Unable to find round date for round %s, skipping..." % data["name"])
                         continue
