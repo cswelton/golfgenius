@@ -115,9 +115,6 @@ class GGParser(object):
                     if player_name not in results["scores"]:
                         logger.debug("Creating scores for %s" % player_name)
                         results["scores"][player_name] = {}
-
-                    results["scores"][player_name]["last_name"] = player_name.split(',', 1)[0].strip()
-                    results["scores"][player_name]["first_name"] = player_name.split(',', 1)[1].strip()
                     results["scores"][player_name]["scores"] = {}
 
                     for score in player_row.find_all('td', {'class': 'score'}):
@@ -316,13 +313,13 @@ class GGParser(object):
         return '/%s' % '/'.join(components)
 
     def to_json(self, ggid, path, filter=None):
-        """ Parses results and saves as json files to path.
+        """ Parses results and saves as json files to output_dir.
         :param ggid: Golf Genius ID
         :param path: Directory to save json files to
         :param filter: A compiled regex filter
         :return: None
         """
-        assert os.path.isdir(path), "path must be a directory"
+        assert os.path.isdir(path), "output_dir must be a directory"
         results = self.parse(ggid, filter=filter)
         for round_id, result in results.items():
             with open(os.path.join(path, "%s.json" % result["name"]), "w") as fp:

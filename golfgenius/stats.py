@@ -8,14 +8,15 @@ import numpy as np
 MONTH_IDX=['january', 'february', 'march', 'april', 'may', 'june', 'july',
            'august', 'september', 'october', 'november', 'december']
 
+
 class Stats(object):
     def __init__(self, results_dir='./results', timedelta=None):
         """
 
-        :param results_dir: path to results directory
+        :param results_dir: output_dir to results directory
         :param timedelta: a relative datetime.timedelta to limit range of results
         """
-        self.results_dir=results_dir
+        self.results_dir = results_dir
         self.results = {}
         self.round_regexp = re.compile(r'Round\s+(?P<round_id>\d+)\s+\((Fri|Sat|Sun|Mon|Tue|Wed|Thu)\,\s+(?P<month>\w+)\s+(?P<day>\d+)\)')
         for f in os.listdir(self.results_dir):
@@ -80,6 +81,40 @@ class Stats(object):
                         )
             scoring[player] = sorted(scoring[player], key=itemgetter("date"))
         return scoring
+
+    @staticmethod
+    def scores_tolist(scores):
+        scores_list = []
+        for k in [str(x) for x in range(1, 19)]:
+            scores_list.append(scores[k])
+        return scores_list
+
+    def iter_player_data(self):
+        for player in self.all_players():
+            stats = {"rounds": [], "name": player}
+            for round_name, results in self.results.items():
+                round_data = {}
+                round_date = results["date"]
+                player_data = results["scores"].get(player)
+                if player_data:
+                    round_scores = [h["score"] for h in player_data["scores"].values()]
+                    if len(round_scores) == 18:
+                        score_list = self.scores_tolist(player_data["scores"])
+                        round_data["score"] = sum(round_scores)
+                        round_data["total"] = sum(round_scores)
+                        round_data["front"] = score_list[0:9]
+                        round_data["back"] = score_list[9:18]
+                        round_data["out"] = sum(round_scores[0:9])
+                        round_data["in"] = sum(round_scores[9:18])
+                        round_data["name"] = round_name
+                        round_data["date"] = round_date
+                        round_data["date_timestamp"] = round_date.toordinal()
+                        stats["rounds"].append(round_data)
+            if len(stats["rounds"]) > 0:
+                stats["rounds"] = sorted(stats["rounds"], key=itemgetter("date"))
+            stats["scoring_average"] = np.average([r["score"] for r in stats["rounds"] if "score" in r])
+            stats["scoring_average"] = float("%.3f" % stats["scoring_average"])
+            yield player, stats
 
     def all_players(self):
         players = set()
