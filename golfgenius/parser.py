@@ -65,7 +65,7 @@ class GGParser(object):
         self.driver.get(login_url)
         time.sleep(2)
         logger.debug("Signing in")
-        login_button = self._get_element(self.soup.find('a', text='Sign in'))
+        login_button = self._get_element(self.soup.find('a', text='SIGN IN'))
         login_button.click()
         time.sleep(1)
         ggid_input = self._get_element(self.soup.find('input', {u"placeholder": u"Enter Your GGID", u"type": u"text"}))
@@ -80,6 +80,7 @@ class GGParser(object):
         sign_in_button2.click()
         logger.debug("Waiting 5 secs")
         time.sleep(5)
+        logger.debug("Sign In Complete")
 
     def _parse_tournaments(self):
         results = {}
