@@ -7,6 +7,9 @@ import time
 import re
 import logging
 import json
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support import expected_conditions as EC
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -34,8 +37,9 @@ class GGParser(object):
         self.driver.set_window_size(width, height)
         self.base_url = 'https://www.golfgenius.com/'
         self.login_url = self.base_url + "golfgenius"
+        self.landing_page = "https://www.golfgenius.com/leagues/7021866105153037134/widgets/tournament_results"
+        self.tournament_regex = re.compile('\/v2tournaments\/(\d+)')
         logger.debug("opened FireFox driver")
-        self.landing_page = None
 
     def screenshot(self, name=None):
         if self.screenshots_enabled:
@@ -86,8 +90,8 @@ class GGParser(object):
         results = {}
         logger.debug("Finding tournament IDs")
         tournaments = self._get_all_tournament_ids()
-        tournament_ids = [_id for _id, name in tournaments]
-        teams = self._get_teams(tournament_ids)
+        tournament_ids = [t.attrs["href"].split('/')[-1] for t in tournaments]
+        teams = self._get_teams(tournaments)
         assert teams is not None, "Unable to parse teams"
         results["teams"] = teams
         logger.debug("populating scores..")
@@ -134,27 +138,41 @@ class GGParser(object):
                                 results["scores"][player_name]["scores"][hole] = {"score": value_int, "type": score_type}
                                 logger.debug("recorded score for %s hole %s: %s" % (player_name, hole, results["scores"][player_name]["scores"][hole]))
 
-    def _get_teams(self, tournament_ids):
+    def _get_teams(self, tournaments):
         logger.debug("looking up teams..")
         teams = []
-        for tournament_id in tournament_ids:
-            self.driver.get(self.base_url + "tournaments2/details?adjusting=false&event_id=%s" % tournament_id)
-            logger.debug("waiting 3 seconds")
-            time.sleep(3)
+        for tournament in tournaments:
+            logger.info("Waiting for tournament link...")
+            xpath = self.xpath_soup(tournament)
+            WebDriverWait(self.driver, 20).until(EC.element_to_be_clickable(
+                (By.XPATH,
+                 xpath))).click()
+            #self._get_element(tournament).click()
+            logger.info("Waiting for expand-all link")
+            link = self.soup.find('a', {"class": "expand-all"})
+            xpath = self.xpath_soup(link)
+            WebDriverWait(self.driver, 20).until(EC.element_to_be_clickable(
+                (By.XPATH,
+                 xpath))).click()
             table = self.soup.find('table', {"class": "scorecard"})
             if table:
+                logger.info("Found table scorecard...looking for team rows..")
                 for tr in table.find_all("tr", {"class": "aggregate_score"}):
+                    logger.info("Found potential team row...")
                     if "data-aggregate-name" in tr.attrs:
+                        logger.info("Found team row...")
                         team_str = tr.attrs["data-aggregate-name"]
                         team = [x.strip() for x in team_str.split("+")]
-                        logger.debug("Found team: %s" % team)
+                        logger.info("Found team: %s" % team)
                         teams.append(team)
+            else:
+                logger.info("Did not find table scorecard...")
             if teams:
                 return teams
 
     def _get_all_tournament_ids(self):
         logger.debug("Finding tournaments")
-        tournaments = [(t.attrs["href"].split('/')[-1], t.text.strip()) for t in self.soup.find_all('a', {"class": "expand-tournament"})]
+        tournaments = self.soup.find_all('a', {"class": "expand-tournament"})
         logger.debug("Found %s tournaments" % len(tournaments))
         return tournaments
 
@@ -165,58 +183,150 @@ class GGParser(object):
         :return: results as dict
         """
         try:
-            logger.info("Logging into {}".format(self.login_url))
-            self.sign_in(ggid)
-            logger.debug("Loading results")
-            self.landing_page = self.driver.current_url
-            results_link = self.soup.find('a', text=re.compile(r"\s*Results\s*"))
-            results_button = self._get_element(results_link)
-            logger.debug("Clicking results_button")
-            results_button.click()
-            logger.debug("Waiting 5 seconds")
-            time.sleep(5)
-            results_landing_page = self.driver.current_url
-            logger.debug("Switching to iframe")
-            self.driver.switch_to.frame("page_iframe")
-            logger.debug("Waiting for 3 seconds")
-            time.sleep(3)
-            logger.debug("Finding Rounds")
-            seen = {}
-            select_element = self.soup.find(id='round')
-            all_options = select_element.find_all('option')
-            if isinstance(filter, re.Pattern):
-                filtered_options = [option for option in all_options if filter.match(option.text.strip()) is not None]
-                logger.info("Discovered {} rounds matching pattern {}. ({} total)".format(
-                    len(filtered_options), filter.pattern, len(all_options)
-                ))
-            else:
-                filtered_options = all_options
-                logger.info("Discovered {} rounds.".format(
-                    len(filtered_options)))
+            logger.info("Loading landing page {}".format(self.landing_page))
+            self.driver.get(self.landing_page)
+            logger.debug("Locating rounds...")
+            rounds = {}
+            links = {}
+            for o in self.soup.find(id='round').find_all('option'):
+                round_name = o.text.strip()
+                if isinstance(filter, re.Pattern):
+                    if filter.match(round_name) is None:
+                        logger.info("Skipping round %s, does not match pattern %s" % (round_name, filter.pattern))
+                        continue
+                rounds[round_name] = {
+                    "name": round_name,
+                    "results": {
+                        "teams": [],
+                        "scores": {}
+                    }
+                }
+                logger.info("Locating round %s.." % round_name)
+                links[round_name] = {}
+                self._get_element(o).click()
+                WebDriverWait(self.driver, 15).until(
+                    EC.visibility_of_element_located(
+                        (By.XPATH, "//a[@class='expand-tournament']")))
 
-            for option in filtered_options:
-                round_name = option.text.strip()
-                round_id = option.attrs["value"]
-                if round_id in seen:
-                    continue
-                logger.debug("Parsing round %s (%s)" % (round_name, round_id))
-                self._get_element(option).click()
-                try:
-                    seen[round_id] = True
-                    round_results = self._parse_tournaments()
-                    player_count = len(round_results.get("scores", {}))
-                    logger.info("Stored {} ({} players)".format(round_name, player_count))
-                    yield round_name, {"name": round_name, "results": round_results}
-                except Exception as exc:
-                    import traceback
-                    logger.critical("Error parsing round %s" % round_name, exc_info=True)
-                    seen[round_id] = True
-                finally:
-                    logger.debug("Reloading results landing page")
-                    self.driver.get(results_landing_page)
-                    self.driver.switch_to.default_content()
-                    logger.debug("Switching back to iframe")
-                    self.driver.switch_to.frame("page_iframe")
+                for anchor in self.soup.find_all('a', {"class": "expand-tournament", "data-tournament-spec-id": True,
+                                                       "data-tournament-event-id": True}):
+                    eid = anchor.attrs["data-tournament-event-id"]
+                    sid = anchor.attrs["data-tournament-spec-id"]
+                    # Using href from option will not work
+                    href = "https://www.golfgenius.com/tournaments2/details?adjusting=false&event_id=%s" % eid
+                    text = anchor.text.strip()
+                    links[round_name][text] = {
+                        "event_id": eid, "spec_id": sid, "href": href, "text": text
+                    }
+
+            logger.info("Pulling data for %s rounds" % len(rounds))
+            for round_name, round_info in rounds.items():
+                logger.info("Parsing scores for %s" % round_name)
+                for bet_name, bet_info in links[round_name].items():
+                    self.driver.get(bet_info["href"])
+                    WebDriverWait(self.driver, 15).until(
+                        EC.visibility_of_element_located(
+                            (By.XPATH, "//table[@class='scorecard']")))
+                    table = self.soup.find('table', {"class": "scorecard"})
+                    teams = [[x.strip() for x in tr.attrs["data-aggregate-name"].split("+")] for tr in table.find_all(
+                        "tr", {"class": "aggregate_score", "data-aggregate-name": True})]
+
+                    if teams and not rounds[round_name]["results"]["teams"]:
+                        rounds[round_name]["results"]["teams"] = teams
+
+                    if table:
+                        for player_row in [
+                            tr for tr in table.find_all('tr', {"class": "net-line"}) if tr.attrs.get(
+                                "data-net-name") is not None]:
+                            player_name = player_row.attrs["data-net-name"].strip()
+                            if player_name not in rounds[round_name]["results"]["scores"]:
+                                logger.debug("Creating scores for %s" % player_name)
+                                rounds[round_name]["results"]["scores"][player_name] = {}
+                            rounds[round_name]["results"]["scores"][player_name]["scores"] = {}
+
+                            for score in player_row.find_all('td', {'class': 'score'}):
+                                hole, value_int, score_type = None, None, None
+                                hole_list = [a for a in score.attrs["class"] if a.startswith('hole')]
+                                if len(hole_list) == 1:
+                                    hole = hole_list[0].replace("hole", "")
+                                value = score.find('div', {"class": "single-score"}).text.strip()
+                                if value.isdigit():
+                                    value_int = int(value)
+                                type_list = [a for a in score.attrs["class"] if a.endswith('-hole')]
+                                if len(type_list) == 1:
+                                    score_type = type_list[0].replace('-hole', '')
+                                if hole is not None and value_int is not None and score_type is not None:
+                                    if hole not in rounds[round_name]["results"]["scores"][player_name]["scores"]:
+                                        rounds[round_name]["results"]["scores"][player_name]["scores"][hole] = {
+                                            "score": value_int,
+                                            "type": score_type
+                                        }
+                                        logger.debug("recorded score for %s hole %s: %s" % (
+                                            player_name, hole, rounds[round_name]["results"]["scores"][player_name]["scores"][hole]))
+
+            logger.info("Data pulled for %s rounds" % len(rounds))
+            for round_name, results in rounds.items():
+                yield round_name, results
+
+            # for l in rounds:
+            #     self.driver.get(l)
+            #     WebDriverWait(d.driver, 15).until(
+            #         EC.visibility_of_element_located(
+            #             (By.XPATH, "//table[@class='scorecard']")))
+            #     table = d.soup.find('table', {"class": "scorecard"})
+            #     teams = [[x.strip() for x in tr.attrs["data-aggregate-name"].split("+")] for tr in
+            #              table.find_all("tr", {"class": "aggregate_score", "data-aggregate-name": True})]
+            #     results.append({"table": table, "teams": teams})
+            #
+            # self.landing_page = self.driver.current_url
+            # results_link = self.soup.find('a', text=re.compile(r"\s*Results\s*"))
+            # results_button = self._get_element(results_link)
+            # logger.debug("Clicking results_button")
+            # results_button.click()
+            # logger.debug("Waiting 5 seconds")
+            # time.sleep(5)
+            # results_landing_page = self.driver.current_url
+            # logger.debug("Switching to iframe")
+            # self.driver.switch_to.frame("page_iframe")
+            # logger.debug("Waiting for 3 seconds")
+            # time.sleep(3)
+            # logger.debug("Finding Rounds")
+            # seen = {}
+            # select_element = self.soup.find(id='round')
+            # all_options = select_element.find_all('option')
+            # if isinstance(filter, re.Pattern):
+            #     filtered_options = [option for option in all_options if filter.match(option.text.strip()) is not None]
+            #     logger.info("Discovered {} rounds matching pattern {}. ({} total)".format(
+            #         len(filtered_options), filter.pattern, len(all_options)
+            #     ))
+            # else:
+            #     filtered_options = all_options
+            #     logger.info("Discovered {} rounds.".format(
+            #         len(filtered_options)))
+            #
+            # for option in filtered_options:
+            #     round_name = option.text.strip()
+            #     round_id = option.attrs["value"]
+            #     if round_id in seen:
+            #         continue
+            #     logger.debug("Parsing round %s (%s)" % (round_name, round_id))
+            #     self._get_element(option).click()
+            #     try:
+            #         seen[round_id] = True
+            #         round_results = self._parse_tournaments()
+            #         player_count = len(round_results.get("scores", {}))
+            #         logger.info("Stored {} ({} players)".format(round_name, player_count))
+            #         yield round_name, {"name": round_name, "results": round_results}
+            #     except Exception as exc:
+            #         import traceback
+            #         logger.critical("Error parsing round %s" % round_name, exc_info=True)
+            #         seen[round_id] = True
+            #     finally:
+            #         logger.debug("Reloading results landing page")
+            #         self.driver.get(results_landing_page)
+            #         self.driver.switch_to.default_content()
+            #         logger.debug("Switching back to iframe")
+            #         self.driver.switch_to.frame("page_iframe")
 
         finally:
             pass

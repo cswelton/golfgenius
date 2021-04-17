@@ -5,7 +5,7 @@ with open("README.md", "r") as fh:
 
 setuptools.setup(
     name="golfgenius",
-    version="1.0.1",
+    version="2.0.0",
     author="Craig Welton",
     description="Parse data from golf genius",
     install_requires=[
