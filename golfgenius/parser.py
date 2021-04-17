@@ -7,6 +7,9 @@ import time
 import re
 import logging
 import json
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support import expected_conditions as EC
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -86,8 +89,8 @@ class GGParser(object):
         results = {}
         logger.debug("Finding tournament IDs")
         tournaments = self._get_all_tournament_ids()
-        tournament_ids = [_id for _id, name in tournaments]
-        teams = self._get_teams(tournament_ids)
+        tournament_ids = [t.attrs["href"].split('/')[-1] for t in tournaments]
+        teams = self._get_teams(tournaments)
         assert teams is not None, "Unable to parse teams"
         results["teams"] = teams
         logger.debug("populating scores..")
@@ -134,27 +137,41 @@ class GGParser(object):
                                 results["scores"][player_name]["scores"][hole] = {"score": value_int, "type": score_type}
                                 logger.debug("recorded score for %s hole %s: %s" % (player_name, hole, results["scores"][player_name]["scores"][hole]))
 
-    def _get_teams(self, tournament_ids):
+    def _get_teams(self, tournaments):
         logger.debug("looking up teams..")
         teams = []
-        for tournament_id in tournament_ids:
-            self.driver.get(self.base_url + "tournaments2/details?adjusting=false&event_id=%s" % tournament_id)
-            logger.debug("waiting 3 seconds")
-            time.sleep(3)
+        for tournament in tournaments:
+            logger.info("Waiting for tournament link...")
+            xpath = self.xpath_soup(tournament)
+            WebDriverWait(self.driver, 20).until(EC.element_to_be_clickable(
+                (By.XPATH,
+                 xpath))).click()
+            #self._get_element(tournament).click()
+            logger.info("Waiting for expand-all link")
+            link = self.soup.find('a', {"class": "expand-all"})
+            xpath = self.xpath_soup(link)
+            WebDriverWait(self.driver, 20).until(EC.element_to_be_clickable(
+                (By.XPATH,
+                 xpath))).click()
             table = self.soup.find('table', {"class": "scorecard"})
             if table:
+                logger.info("Found table scorecard...looking for team rows..")
                 for tr in table.find_all("tr", {"class": "aggregate_score"}):
+                    logger.info("Found potential team row...")
                     if "data-aggregate-name" in tr.attrs:
+                        logger.info("Found team row...")
                         team_str = tr.attrs["data-aggregate-name"]
                         team = [x.strip() for x in team_str.split("+")]
-                        logger.debug("Found team: %s" % team)
+                        logger.info("Found team: %s" % team)
                         teams.append(team)
+            else:
+                logger.info("Did not find table scorecard...")
             if teams:
                 return teams
 
     def _get_all_tournament_ids(self):
         logger.debug("Finding tournaments")
-        tournaments = [(t.attrs["href"].split('/')[-1], t.text.strip()) for t in self.soup.find_all('a', {"class": "expand-tournament"})]
+        tournaments = self.soup.find_all('a', {"class": "expand-tournament"})
         logger.debug("Found %s tournaments" % len(tournaments))
         return tournaments
 
