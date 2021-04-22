@@ -18,7 +18,7 @@ logger.addHandler(logging.NullHandler())
 
 class GGParser(object):
     def __init__(self, width=1920, height=1080, headless=False, driver_path=None,
-                 screenshots_enabled=True, screenshot_directory='.screenshots'):
+                 screenshots_enabled=True, screenshot_directory='.screenshots', existing_results=None):
         if driver_path is None:
             driver_path = os.path.join(os.path.dirname(__file__), "drivers", "firefox", "0.28", "geckodriver")
         self.screenshots_enabled = screenshots_enabled
@@ -27,6 +27,18 @@ class GGParser(object):
         if screenshots_enabled:
             if not os.path.isdir(self.screenshot_directory):
                 os.makedirs(self.screenshot_directory)
+        self._captured_rounds = set()
+        if existing_results is not None:
+            logger.info("Loading previously collected rounds from %s" % existing_results)
+            for root, dirs, files in os.walk(existing_results):
+                for f in files:
+                    fpath = os.path.join(root, f)
+                    if fpath.endswith(".json"):
+                        with open(fpath) as fp:
+                            data = json.load(fp)
+                        self._captured_rounds.add(data.get("name"))
+            logger.info("Loaded %d previously collected rounds" % len(self._captured_rounds))
+
         options = FirefoxOptions()
         if headless:
             options.add_argument("--headless")
@@ -194,6 +206,9 @@ class GGParser(object):
                     if filter.match(round_name) is None:
                         logger.info("Skipping round %s, does not match pattern %s" % (round_name, filter.pattern))
                         continue
+                if round_name in self._captured_rounds:
+                    logger.info("Skipping round %s, already captured" % round_name)
+                    continue
                 rounds[round_name] = {
                     "name": round_name,
                     "results": {
